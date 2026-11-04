@@ -3,6 +3,7 @@ from __future__ import annotations
 import collections.abc as cabc
 import os
 import re
+import shlex
 import typing as t
 from gettext import gettext as _
 
@@ -98,7 +99,7 @@ _SOURCE_BASH = """\
     local response
 
     response=$(env COMP_WORDS="${COMP_WORDS[*]}" COMP_CWORD=$COMP_CWORD \
-%(complete_var)s=bash_complete $1)
+%(complete_var)s=bash_complete "$1")
 
     for completion in $response; do
         IFS=',' read type value <<< "$completion"
@@ -118,7 +119,7 @@ _SOURCE_BASH = """\
 }
 
 %(complete_func)s_setup() {
-    complete -o nosort -F %(complete_func)s %(prog_name)s
+    complete -o nosort -F %(complete_func)s -- %(prog_name)s
 }
 
 %(complete_func)s_setup;
@@ -296,7 +297,12 @@ class ShellComplete:
 
 
 class BashComplete(ShellComplete):
-    """Shell completion for Bash."""
+    """Shell completion for Bash.
+
+    .. versionchanged:: 8.2
+        Escape the program and completion variable names in the generated
+        script.
+    """
 
     name = "bash"
     source_template = _SOURCE_BASH
@@ -329,7 +335,10 @@ class BashComplete(ShellComplete):
 
     def source(self) -> str:
         self._check_version()
-        return super().source()
+        source_vars = self.source_vars()
+        source_vars["prog_name"] = shlex.quote(source_vars["prog_name"])
+        source_vars["complete_var"] = shlex.quote(source_vars["complete_var"])
+        return self.source_template % source_vars
 
     def get_completion_args(self) -> tuple[list[str], str]:
         cwords = split_arg_string(os.environ["COMP_WORDS"])
@@ -452,8 +461,6 @@ def split_arg_string(string: str) -> list[str]:
     .. versionchanged:: 8.2
         Moved to ``shell_completion`` from ``parser``.
     """
-    import shlex
-
     lex = shlex.shlex(string, posix=True)
     lex.whitespace_split = True
     lex.commenters = ""
