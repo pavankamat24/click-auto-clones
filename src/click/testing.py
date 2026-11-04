@@ -63,8 +63,10 @@ def _pause_echo(stream: EchoingStdin | None) -> cabc.Iterator[None]:
         yield
     else:
         stream._paused = True
-        yield
-        stream._paused = False
+        try:
+            yield
+        finally:
+            stream._paused = False
 
 
 class BytesIOCopy(io.BytesIO):
@@ -341,16 +343,25 @@ class CliRunner:
         @_pause_echo(echo_input)  # type: ignore
         def visible_input(prompt: str | None = None) -> str:
             sys.stdout.write(prompt or "")
-            val = text_input.readline().rstrip("\r\n")
+            sys.stdout.flush()
+            val = text_input.readline()
+            if not val:
+                raise EOFError()
+            val = val.rstrip("\r\n")
             sys.stdout.write(f"{val}\n")
             sys.stdout.flush()
             return val
 
         @_pause_echo(echo_input)  # type: ignore
         def hidden_input(prompt: str | None = None) -> str:
-            sys.stdout.write(f"{prompt or ''}\n")
+            sys.stdout.write(prompt or "")
             sys.stdout.flush()
-            return text_input.readline().rstrip("\r\n")
+            val = text_input.readline()
+            if not val:
+                raise EOFError()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            return val.rstrip("\r\n")
 
         @_pause_echo(echo_input)  # type: ignore
         def _getchar(echo: bool) -> str:
