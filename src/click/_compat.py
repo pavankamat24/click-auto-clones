@@ -413,6 +413,10 @@ def open_stream(
     import errno
     import random
 
+    # Stage alongside the resolved destination so directory permissions and
+    # the final replacement apply to the same location.
+    filename = os.path.realpath(filename)
+
     try:
         perm: int | None = os.stat(filename).st_mode
     except OSError:
@@ -445,7 +449,7 @@ def open_stream(
         os.chmod(tmp_filename, perm)  # in case perm includes bits in umask
 
     f = _wrap_io_open(fd, mode, encoding, errors)
-    af = _AtomicFile(f, tmp_filename, os.path.realpath(filename))
+    af = _AtomicFile(f, tmp_filename, filename)
     return t.cast(t.IO[t.Any], af), True
 
 

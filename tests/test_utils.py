@@ -564,6 +564,50 @@ def test_open_file_atomic_permissions_new_file(runner):
         assert stat.S_IMODE(os.stat("new.txt").st_mode) == permissions
 
 
+@pytest.mark.parametrize("api", ["open_file", "lazy_open_file", "file", "lazy_file"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_atomic_write_symlink_stages_next_to_target(tmp_path, api, existing):
+    public = tmp_path / "public"
+    public.mkdir()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    target = private / "target.txt"
+    if existing:
+        target.write_bytes(b"old")
+        target.chmod(0o644)
+
+    link = public / "link.txt"
+    try:
+        link.symlink_to(pathlib.Path("..") / "private" / "target.txt")
+    except OSError:
+        pytest.skip("The current OS or FS doesn't support symlinks.")
+
+    if api in {"open_file", "lazy_open_file"}:
+        stream = click.open_file(link, "wb", lazy=api == "lazy_open_file", atomic=True)
+    else:
+        stream = click.File("wb", lazy=api == "lazy_file", atomic=True).convert(
+            link, None, None
+        )
+
+    with stream:
+        stream.write(b"confidential")
+        stream.flush()
+        assert not list(public.glob(".__atomic-write*"))
+        staging = list(private.glob(".__atomic-write*"))
+        assert len(staging) == 1
+        assert staging[0].read_bytes() == b"confidential"
+        if existing:
+            assert target.read_bytes() == b"old"
+        else:
+            assert not target.exists()
+
+    assert link.is_symlink()
+    assert target.read_bytes() == b"confidential"
+    assert not list(private.glob(".__atomic-write*"))
+    if existing and not WIN:
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
 def test_iter_keepopenfile(tmpdir):
     expected = list(map(str, range(10)))
     p = tmpdir.mkdir("testdir").join("testfile")
