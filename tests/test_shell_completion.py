@@ -1,3 +1,6 @@
+import shutil
+import subprocess
+import sys
 import warnings
 
 import pytest
@@ -303,6 +306,93 @@ def test_full_source(runner, shell):
     cli = Group("cli", commands=[Command("a"), Command("b")])
     result = runner.invoke(cli, env={"_CLI_COMPLETE": f"{shell}_source"})
     assert f"_CLI_COMPLETE={shell}_complete" in result.output
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is required")
+@pytest.mark.usefixtures("_patch_for_completion")
+@pytest.mark.parametrize(
+    "prog_name",
+    [
+        "cli$(touch injected)",
+        "cli; touch injected; #",
+        "cli 'quoted' *",
+        "cli\n$(touch injected)",
+        "-cli",
+    ],
+)
+def test_bash_source_quotes_program_name(runner, tmp_path, prog_name):
+    cli = Command("cli")
+    result = runner.invoke(
+        cli,
+        prog_name=prog_name,
+        complete_var="_CLI_COMPLETE",
+        env={"_CLI_COMPLETE": "bash_source"},
+    )
+    assert result.exit_code == 0
+
+    executable = tmp_path / prog_name
+    executable.write_text(
+        '#!/bin/sh\n[ "$_CLI_COMPLETE" = bash_complete ] || exit 1\n'
+        "printf 'plain,success\\n'\n"
+    )
+    executable.chmod(0o755)
+    func_name = click.shell_completion.BashComplete(
+        cli, {}, prog_name, "_CLI_COMPLETE"
+    ).func_name
+    check = f"""\
+{result.output}
+complete -p -- "$1" >/dev/null || exit 1
+COMP_WORDS=("$1" "")
+COMP_CWORD=1
+{func_name} "$2"
+[[ ${{COMPREPLY[0]}} == success ]]
+"""
+    proc = subprocess.run(
+        ["bash", "-c", check, "bash", prog_name, str(executable)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert not (tmp_path / "injected").exists()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Bash is required")
+@pytest.mark.usefixtures("_patch_for_completion")
+@pytest.mark.parametrize(
+    "complete_var", ["_CLI_COMPLETE", "BAD-NAME", "-BAD", "BAD$(touch injected)", "é"]
+)
+def test_bash_source_quotes_completion_var(runner, tmp_path, complete_var):
+    result = runner.invoke(
+        Command("cli"),
+        prog_name="cli",
+        complete_var=complete_var,
+        env={complete_var: "bash_source"},
+    )
+    assert result.exit_code == 0
+
+    executable = tmp_path / "cli"
+    executable.write_text(
+        f"#!{sys.executable}\nimport os\n"
+        f"assert os.environ[{complete_var!r}] == 'bash_complete'\n"
+        "print('plain,success')\n"
+    )
+    executable.chmod(0o755)
+    check = f"""\
+{result.output}
+COMP_WORDS=(cli "")
+COMP_CWORD=1
+_cli_completion "$1"
+[[ ${{COMPREPLY[0]}} == success ]]
+"""
+    proc = subprocess.run(
+        ["bash", "-c", check, "bash", str(executable)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert not (tmp_path / "injected").exists()
 
 
 @pytest.mark.parametrize(

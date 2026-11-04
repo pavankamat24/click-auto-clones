@@ -5,6 +5,7 @@ Version 8.2.0
 
 Unreleased
 
+-   Escape program and completion variable names in Bash completion scripts.
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`
