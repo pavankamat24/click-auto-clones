@@ -5,6 +5,8 @@ Version 8.2.0
 
 Unreleased
 
+-   Stage atomic writes next to the resolved target when the output path
+    is a symlink, preserving the target directory's access protections.
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`
