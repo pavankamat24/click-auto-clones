@@ -130,6 +130,74 @@ def test_prompts():
     assert result.output == "Foo: \nfoo=wau wau\n"
 
 
+@pytest.mark.parametrize("hide_input", [False, True])
+@pytest.mark.parametrize("echo_stdin", [False, True])
+@pytest.mark.parametrize(
+    ("input", "kwargs"),
+    [
+        ("", {}),
+        ("\n", {}),
+        ("invalid\n", {"type": int}),
+        ("secret\n", {"confirmation_prompt": True}),
+        ("", {"default": "fallback"}),
+    ],
+)
+def test_prompt_eof_aborts(input, kwargs, hide_input, echo_stdin):
+    @click.command()
+    def cli():
+        click.echo(click.prompt("Value", hide_input=hide_input, **kwargs))
+
+    result = CliRunner(echo_stdin=echo_stdin).invoke(cli, input=input)
+    assert result.exit_code == 1
+    assert result.stderr == "Aborted!\n"
+    assert len(result.output) < 300
+    if hide_input:
+        assert "secret" not in result.output
+
+
+@pytest.mark.parametrize("default", [None, True, False])
+def test_confirm_eof_aborts(default):
+    @click.command()
+    def cli():
+        click.echo(click.confirm("Proceed", default=default))
+
+    result = CliRunner().invoke(cli, input="")
+    assert result.exit_code == 1
+    assert result.stderr == "Aborted!\n"
+
+
+@pytest.mark.parametrize("hide_input", [False, True])
+def test_prompt_blank_line_and_unterminated_input(hide_input):
+    @click.command()
+    def cli():
+        click.echo(click.prompt("Value", default="fallback", hide_input=hide_input))
+        click.echo(click.prompt("Next", hide_input=hide_input))
+
+    result = CliRunner().invoke(cli, input="\nanswer")
+    assert result.exit_code == 0
+    assert "fallback\n" in result.output
+    assert result.output.endswith("answer\n")
+
+
+@pytest.mark.parametrize("hide_input", [False, True])
+def test_echo_stdin_resumes_after_prompt_eof(hide_input):
+    stream = BytesIO()
+
+    @click.command()
+    def cli():
+        try:
+            click.prompt("Value", hide_input=hide_input)
+        except click.Abort:
+            stream.seek(0)
+            stream.write(b"follow-up")
+            stream.seek(0)
+            click.echo(sys.stdin.read())
+
+    result = CliRunner(echo_stdin=True).invoke(cli, input=stream)
+    assert result.exit_code == 0
+    assert result.output.endswith("follow-upfollow-up\n")
+
+
 def test_getchar():
     @click.command()
     def continue_it():
