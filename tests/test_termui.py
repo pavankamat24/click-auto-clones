@@ -1,3 +1,4 @@
+import os
 import platform
 import tempfile
 import time
@@ -485,3 +486,47 @@ def test_false_show_default_cause_no_default_display_in_prompt(runner):
     # is False
     result = runner.invoke(cmd, input="my-input", standalone_mode=False)
     assert "my-default-value" not in result.output
+
+
+@pytest.mark.skipif(WIN, reason="Requires a POSIX executable")
+@pytest.mark.parametrize("wait", [False, True])
+@pytest.mark.parametrize("locate", [False, True])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/$(touch injected)/file",
+        "https://example.com/`touch injected`/file",
+        'directory with spaces/and "quotes"/file',
+        "file:///directory%20with%20spaces/file",
+    ],
+)
+def test_launch_cygwin_literal_destination(monkeypatch, tmp_path, url, wait, locate):
+    launcher = tmp_path / "cygstart"
+    launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > arguments\nexit 7\n')
+    launcher.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(click._termui_impl.sys, "platform", "cygwin")
+    monkeypatch.setattr(click._termui_impl, "WIN", False)
+    monkeypatch.setattr(click._termui_impl, "CYGWIN", True)
+
+    result = click.launch(url, wait=wait, locate=locate)
+
+    assert not (tmp_path / "injected").exists()
+    if locate:
+        from urllib.parse import unquote
+
+        destination = unquote(url[7:]) if url.startswith("file://") else url
+        expected = [os.path.dirname(destination)]
+    else:
+        expected = ["-w", url] if wait else [url]
+    assert (tmp_path / "arguments").read_text().splitlines() == expected
+    assert result == 7
+
+
+def test_launch_cygwin_missing_launcher(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(click._termui_impl.sys, "platform", "cygwin")
+    monkeypatch.setattr(click._termui_impl, "WIN", False)
+    monkeypatch.setattr(click._termui_impl, "CYGWIN", True)
+    assert click.launch("https://example.com") == 1

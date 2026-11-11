@@ -634,14 +634,16 @@ def open_url(url: str, wait: bool = False, locate: bool = False) -> int:
             args = f'start {wait_str} "" "{url}"'
         return os.system(args)
     elif CYGWIN:
+        args = ["cygstart"]
         if locate:
-            url = os.path.dirname(_unquote_file(url).replace('"', ""))
-            args = f'cygstart "{url}"'
-        else:
-            url = url.replace('"', "")
-            wait_str = "-w" if wait else ""
-            args = f'cygstart {wait_str} "{url}"'
-        return os.system(args)
+            url = os.path.dirname(_unquote_file(url))
+        elif wait:
+            args.append("-w")
+        args.append(url)
+        try:
+            return subprocess.call(args)
+        except OSError:
+            return 1
 
     try:
         if locate:
