@@ -5,6 +5,9 @@ Version 8.2.0
 
 Unreleased
 
+-   Pass destinations directly to ``cygstart`` on Cygwin to prevent shell
+    command injection in ``launch``. Return the process exit code.
+
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`
