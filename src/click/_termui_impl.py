@@ -520,6 +520,7 @@ class Editor:
         return "vi"
 
     def edit_files(self, filenames: cabc.Iterable[str]) -> None:
+        import shlex
         import subprocess
 
         editor = self.get_editor()
@@ -529,7 +530,13 @@ class Editor:
             environ = os.environ.copy()
             environ.update(self.env)
 
-        exc_filename = " ".join(f'"{filename}"' for filename in filenames)
+        # Prevent relative filenames from being interpreted as editor options.
+        filenames = (f".{os.sep}{f}" if f.startswith("-") else f for f in filenames)
+        if WIN:
+            exc_filename = " ".join(f'"{filename}"' for filename in filenames)
+        else:
+            # Double quotes still allow command substitution in a POSIX shell.
+            exc_filename = " ".join(shlex.quote(filename) for filename in filenames)
 
         try:
             c = subprocess.Popen(

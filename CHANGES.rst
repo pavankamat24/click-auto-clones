@@ -5,6 +5,9 @@ Version 8.2.0
 
 Unreleased
 
+-   Escape filenames passed to editors on POSIX to prevent shell injection,
+    and protect leading-dash filenames from being treated as editor options.
+
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`

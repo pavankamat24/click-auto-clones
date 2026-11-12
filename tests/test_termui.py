@@ -395,6 +395,41 @@ def test_edit(runner):
             assert reopened_file.read() == "aTest\nbTest"
 
 
+@pytest.mark.skipif(WIN, reason="Tests POSIX shell escaping and sed.")
+@pytest.mark.parametrize("multiple", [False, True])
+@pytest.mark.parametrize(
+    "filename",
+    ["$(touch INJECTED)", "`touch INJECTED`", 'a"; touch INJECTED; #', "a'b c", "-n"],
+)
+def test_edit_literal_filename(tmp_path, monkeypatch, filename, multiple):
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / filename
+    path.write_text("original\n")
+    other = tmp_path / "other"
+    other.write_text("original\n")
+    filenames = iter((filename, "other")) if multiple else filename
+
+    click.edit(filename=filenames, editor="sed -i 's/original/edited/'")
+
+    assert path.read_text() == "edited\n"
+    assert other.read_text() == ("edited\n" if multiple else "original\n")
+    assert not (tmp_path / "INJECTED").exists()
+
+
+@pytest.mark.skipif(WIN, reason="Tests POSIX shell escaping and sed.")
+def test_edit_literal_extension(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    result = click.edit(
+        "original", extension="$(touch INJECTED)", editor="sed -i 's/original/edited/'"
+    )
+
+    assert result == "edited\n"
+    assert not (tmp_path / "INJECTED").exists()
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize(
     ("prompt_required", "required", "args", "expect"),
     [
