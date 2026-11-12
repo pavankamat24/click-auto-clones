@@ -2262,11 +2262,11 @@ class Parameter:
             value = self.value_from_envvar(ctx)
             source = ParameterSource.ENVIRONMENT
 
-        if value is None:
+        if value is None and not ctx.resilient_parsing:
             value = ctx.lookup_default(self.name)  # type: ignore
             source = ParameterSource.DEFAULT_MAP
 
-        if value is None:
+        if value is None and not ctx.resilient_parsing:
             value = self.get_default(ctx)
             source = ParameterSource.DEFAULT
 

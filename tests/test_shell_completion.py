@@ -440,3 +440,49 @@ def test_files_closed(runner) -> None:
             assert not current_warnings, "There should be no warnings to start"
             _get_completions(cli, args=[], incomplete="")
             assert not current_warnings, "There should be no warnings after either"
+
+
+@pytest.mark.parametrize("atomic", [False, True])
+@pytest.mark.parametrize("use_default_map", [False, True])
+@pytest.mark.parametrize("param_cls", [Option, Argument])
+def test_writable_default_untouched(tmp_path, atomic, use_default_map, param_cls):
+    target = tmp_path / "output.txt"
+    target.write_text("keep me")
+    param = param_cls(
+        ["--output"] if param_cls is Option else ["output"],
+        type=File("w", lazy=False, atomic=atomic),
+        default=None if use_default_map else str(target),
+    )
+    cli = Command("cli", params=[param])
+    ctx_args = {"default_map": {"output": str(target)}} if use_default_map else {}
+    comp = ShellComplete(cli, ctx_args.copy(), "cli", "_CLI_COMPLETE")
+    comp.get_completions([], "")
+    assert target.read_text() == "keep me"
+    assert list(tmp_path.iterdir()) == [target]
+
+    # Normal parsing must still open the default file for writing.
+    with cli.make_context("cli", [], **ctx_args) as ctx:
+        ctx.params["output"].write("executed")
+    assert target.read_text() == "executed"
+
+
+@pytest.mark.parametrize("use_default_map", [False, True])
+def test_callable_default_not_evaluated(use_default_map):
+    calls = []
+
+    def default():
+        calls.append(True)
+        return "value"
+
+    cli = Command(
+        "cli",
+        params=[Option(["--value"], default=None if use_default_map else default)],
+    )
+    ctx_args = {"default_map": {"value": default}} if use_default_map else {}
+    comp = ShellComplete(cli, ctx_args.copy(), "cli", "_CLI_COMPLETE")
+    comp.get_completions([], "")
+    assert calls == []
+
+    with cli.make_context("cli", [], **ctx_args) as ctx:
+        assert ctx.params["value"] == "value"
+    assert calls == [True]
