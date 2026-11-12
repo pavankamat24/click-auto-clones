@@ -5,6 +5,9 @@ Version 8.2.0
 
 Unreleased
 
+-   Ignore parameter defaults and ``default_map`` during resilient parsing,
+    preventing shell completion from opening default output files.
+
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`
