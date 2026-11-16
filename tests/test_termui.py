@@ -1,6 +1,9 @@
+import os
 import platform
+import subprocess
 import tempfile
 import time
+from unittest.mock import Mock
 
 import pytest
 
@@ -485,3 +488,45 @@ def test_false_show_default_cause_no_default_display_in_prompt(runner):
     # is False
     result = runner.invoke(cmd, input="my-input", standalone_mode=False)
     assert "my-default-value" not in result.output
+
+
+@pytest.mark.parametrize("wait", [False, True])
+@pytest.mark.parametrize(
+    ("url", "target"),
+    [
+        ("C:/some directory/file.txt", "C:/some directory/file.txt"),
+        ("file://C:/some%20directory/file.txt", "C:/some directory/file.txt"),
+        (
+            "file://C:/file%22%26echo%20injected%26%22.txt",
+            'C:/file"&echo injected&".txt',
+        ),
+        ('C:/file"&echo injected&".txt', 'C:/file"&echo injected&".txt'),
+        ("file://C:/%25TEMP%25/a%7Cb%5Ec.txt", "C:/%TEMP%/a|b^c.txt"),
+        ("C:/some directory/", "C:/some directory/"),
+    ],
+)
+def test_launch_windows_locate(monkeypatch, url, target, wait):
+    monkeypatch.setattr(click._termui_impl.sys, "platform", "win32")
+    monkeypatch.setattr(click._termui_impl, "WIN", True)
+    system = Mock(side_effect=AssertionError("must not invoke a shell"))
+    monkeypatch.setattr(os, "system", system)
+    process = Mock()
+    process.wait.return_value = 7
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    assert click.launch(url, locate=True, wait=wait) == 7
+    popen.assert_called_once_with(["explorer", f"/select,{target}"])
+    process.wait.assert_called_once_with()
+    system.assert_not_called()
+
+
+def test_launch_windows_locate_missing_explorer(monkeypatch):
+    monkeypatch.setattr(click._termui_impl.sys, "platform", "win32")
+    monkeypatch.setattr(click._termui_impl, "WIN", True)
+    monkeypatch.setattr(subprocess, "Popen", Mock(side_effect=OSError))
+    monkeypatch.setattr(
+        os, "system", Mock(side_effect=AssertionError("must not invoke a shell"))
+    )
+
+    assert click.launch("file://C:/file.txt", locate=True) == 1

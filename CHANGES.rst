@@ -5,6 +5,8 @@ Version 8.2.0
 
 Unreleased
 
+-   Avoid shell command injection when locating a file on Windows with
+    ``launch(..., locate=True)``.
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`

@@ -626,8 +626,13 @@ def open_url(url: str, wait: bool = False, locate: bool = False) -> int:
             null.close()
     elif WIN:
         if locate:
-            url = _unquote_file(url.replace('"', ""))
-            args = f'explorer /select,"{url}"'
+            # Pass the decoded path directly so it cannot become shell syntax.
+            try:
+                return subprocess.Popen(
+                    ["explorer", f"/select,{_unquote_file(url)}"]
+                ).wait()
+            except OSError:
+                return 1
         else:
             url = url.replace('"', "")
             wait_str = "/WAIT" if wait else ""
