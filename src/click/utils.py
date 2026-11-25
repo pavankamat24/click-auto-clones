@@ -389,6 +389,10 @@ def open_file(
     :param atomic: Write to a temporary file and replace the given file
         on close.
 
+    .. versionchanged:: 8.2
+        On Linux, atomic replacement preserves the existing file's
+        ownership and POSIX access ACL, or raises if it cannot.
+
     .. versionadded:: 3.0
     """
     if lazy:

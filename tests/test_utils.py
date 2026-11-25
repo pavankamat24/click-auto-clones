@@ -1,6 +1,8 @@
+import errno
 import os
 import pathlib
 import stat
+import struct
 import sys
 from collections import namedtuple
 from io import StringIO
@@ -562,6 +564,112 @@ def test_open_file_atomic_permissions_new_file(runner):
         result = runner.invoke(cli, ["new.txt"])
         assert result.exception is None
         assert stat.S_IMODE(os.stat("new.txt").st_mode) == permissions
+
+
+@pytest.fixture
+def atomic_acl_target(tmp_path):
+    if sys.platform != "linux":
+        pytest.skip("requires Linux POSIX ACLs")
+
+    # Linux POSIX ACL xattr format (linux/posix_acl_xattr.h). The named
+    # group may read, but the owning group has no permissions.
+    undefined_id = 0xFFFFFFFF
+    named_group = 65534 if os.getegid() != 65534 else 65533
+    acl = struct.pack("<I", 2) + b"".join(
+        struct.pack("<HHI", tag, perm, gid)
+        for tag, perm, gid in [
+            (0x01, 6, undefined_id),  # owner
+            (0x04, 0, undefined_id),  # owning group
+            (0x08, 4, named_group),
+            (0x10, 4, undefined_id),  # mask
+            (0x20, 0, undefined_id),  # other
+        ]
+    )
+    target = tmp_path / "existing.txt"
+    target.write_text("old data")
+    target.chmod(0o640)
+    return target, acl
+
+
+def _install_acl(path, attribute, acl):
+    try:
+        os.setxattr(path, attribute, acl)
+    except OSError as e:
+        if e.errno == errno.EOPNOTSUPP:
+            pytest.skip("filesystem does not support POSIX ACLs")
+        raise
+
+
+@pytest.mark.parametrize("has_access_acl", [True, False])
+def test_open_file_atomic_access_policy(atomic_acl_target, has_access_acl):
+    target, acl = atomic_acl_target
+    access = "system.posix_acl_access"
+
+    if has_access_acl:
+        _install_acl(target, access, acl)
+    else:
+        _install_acl(target.parent, "system.posix_acl_default", acl)
+
+    original = target.stat()
+
+    def check_policy(path):
+        current = path.stat()
+        assert current.st_mode == original.st_mode
+        assert (current.st_uid, current.st_gid) == (original.st_uid, original.st_gid)
+        if has_access_acl:
+            assert os.getxattr(path, access) == acl
+        else:
+            assert access not in os.listxattr(path)
+
+    with click.open_file(target, "w", atomic=True) as f:
+        f.write("new data")
+        f.flush()
+        (staged,) = target.parent.glob(".__atomic-write*")
+        check_policy(staged)
+        assert target.read_text() == "old data"
+
+    check_policy(target)
+    assert target.read_text() == "new data"
+    assert not staged.exists()
+
+
+def test_open_file_atomic_preserves_acl_group(atomic_acl_target):
+    target, acl = atomic_acl_target
+    groups = set(os.getgroups()) - {os.getegid(), 65533, 65534}
+    if not groups:
+        pytest.skip("requires a supplementary group")
+
+    group = min(groups)
+    os.chown(target, -1, group)
+    access = "system.posix_acl_access"
+    _install_acl(target, access, acl)
+
+    with click.open_file(target, "w", atomic=True) as f:
+        (staged,) = target.parent.glob(".__atomic-write*")
+        assert staged.stat().st_gid == group
+        assert os.getxattr(staged, access) == acl
+        f.write("new data")
+
+    assert target.stat().st_gid == group
+    assert os.getxattr(target, access) == acl
+
+
+def test_open_file_atomic_acl_restore_failure(atomic_acl_target, monkeypatch):
+    target, acl = atomic_acl_target
+    access = "system.posix_acl_access"
+    _install_acl(target, access, acl)
+
+    def reject_acl(fd, attribute, value):
+        raise OSError(errno.EPERM, "ACL restore denied")
+
+    monkeypatch.setattr(os, "setxattr", reject_acl)
+
+    with pytest.raises(OSError, match="ACL restore denied"):
+        click.open_file(target, "w", atomic=True)
+
+    assert target.read_text() == "old data"
+    assert os.getxattr(target, access) == acl
+    assert list(target.parent.iterdir()) == [target]
 
 
 def test_iter_keepopenfile(tmpdir):

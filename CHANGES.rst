@@ -5,6 +5,9 @@ Version 8.2.0
 
 Unreleased
 
+-   Preserve existing file ownership and POSIX access ACLs during atomic
+    replacement on Linux. Fail if the access policy cannot be preserved.
+
 -   Drop support for Python 3.7. :pr:`2588`
 -   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.
     :pr:`2438`
