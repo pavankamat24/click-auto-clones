@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import codecs
 import collections.abc as cabc
+import errno
 import io
 import os
 import re
@@ -368,6 +369,42 @@ def _wrap_io_open(
     return open(file, mode, encoding=encoding, errors=errors)
 
 
+if sys.platform == "linux":
+    _ACCESS_ACL = "system.posix_acl_access"
+    _NO_ACCESS_ACL = {errno.ENODATA, errno.EOPNOTSUPP}
+
+    def _get_access_acl(filename: str) -> bytes | None:
+        try:
+            return os.getxattr(filename, _ACCESS_ACL)
+        except OSError as e:
+            if e.errno not in _NO_ACCESS_ACL:
+                raise
+
+        return None
+
+    def _set_atomic_permissions(
+        fd: int, source: os.stat_result, acl: bytes | None
+    ) -> None:
+        current = os.fstat(fd)
+
+        if (current.st_uid, current.st_gid) != (source.st_uid, source.st_gid):
+            os.fchown(fd, source.st_uid, source.st_gid)
+
+        if acl is not None:
+            # Restore the ACL before chmod: the source's group bits may
+            # represent a mask, and must not grant the file group access.
+            os.setxattr(fd, _ACCESS_ACL, acl)
+        else:
+            # The staging file may have inherited a directory default ACL.
+            try:
+                os.removexattr(fd, _ACCESS_ACL)
+            except OSError as e:
+                if e.errno not in _NO_ACCESS_ACL:
+                    raise
+
+        os.fchmod(fd, source.st_mode)
+
+
 def open_stream(
     filename: str | os.PathLike[str],
     mode: str = "r",
@@ -410,13 +447,28 @@ def open_stream(
     # as a proxy in the same folder and then using the fdopen
     # functionality to wrap it in a Python file.  Then we wrap it in an
     # atomic file that moves the file over on close.
-    import errno
     import random
 
+    real_filename = os.path.realpath(filename)
+    source = None
     try:
-        perm: int | None = os.stat(filename).st_mode
+        source = os.stat(real_filename)
+    except FileNotFoundError:
+        pass
     except OSError:
-        perm = None
+        if sys.platform == "linux":
+            raise
+
+    perm = None if source is None else source.st_mode
+    create_mode = 0o666 if perm is None else perm
+
+    acl = None
+
+    if sys.platform == "linux" and source is not None:
+        acl = _get_access_acl(real_filename)
+        # Even with an inherited ACL, no one may open the staging file
+        # until the original ownership and permissions are in place.
+        create_mode = 0
 
     flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
 
@@ -429,7 +481,7 @@ def open_stream(
             f".__atomic-write{random.randrange(1 << 32):08x}",
         )
         try:
-            fd = os.open(tmp_filename, flags, 0o666 if perm is None else perm)
+            fd = os.open(tmp_filename, flags, create_mode)
             break
         except OSError as e:
             if e.errno == errno.EEXIST or (
@@ -441,11 +493,21 @@ def open_stream(
                 continue
             raise
 
-    if perm is not None:
-        os.chmod(tmp_filename, perm)  # in case perm includes bits in umask
+    try:
+        if sys.platform == "linux" and source is not None:
+            _set_atomic_permissions(fd, source, acl)
+        elif perm is not None:
+            os.chmod(tmp_filename, perm)  # in case perm includes bits in umask
+    except BaseException:
+        try:
+            os.close(fd)
+        finally:
+            os.unlink(tmp_filename)
+
+        raise
 
     f = _wrap_io_open(fd, mode, encoding, errors)
-    af = _AtomicFile(f, tmp_filename, os.path.realpath(filename))
+    af = _AtomicFile(f, tmp_filename, real_filename)
     return t.cast(t.IO[t.Any], af), True
 
 
